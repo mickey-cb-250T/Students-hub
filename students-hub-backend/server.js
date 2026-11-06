@@ -49,6 +49,6 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Students Hub backend running on http://localhost:${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Students Hub backend running on http://localhost:${PORT}`));
 
 export { app, db };
