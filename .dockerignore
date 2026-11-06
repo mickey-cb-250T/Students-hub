@@ -1,0 +1,16 @@
+node_modules
+*/node_modules
+.git
+.gitignore
+dist
+*/dist
+*.db
+*.sqlite
+uploads/*
+!uploads/.gitkeep
+students-hub-backend/uploads/*
+!students-hub-backend/uploads/.gitkeep
+.env
+*/.env
+*.log
+
