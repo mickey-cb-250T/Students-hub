@@ -1,8 +1,9 @@
 import * as React from "react"
 import "./login.css"
+import PWAInstallButton from "./PWAInstallButton"
 type Props={onAuthenticated:(token:string)=>void;onGuest:()=>void}
 type AuthResponse={token?:string;user?:any;error?:string}
-const API=(import.meta.env.VITE_API_URL||"/api").replace(/\/$/,"")
+const API=(import.meta.env.VITE_API_URL?.trim()||"/api").replace(/\/$/,"")
 
 export default function LoginPage({onAuthenticated,onGuest}:Props){
  const [mode,setMode]=React.useState<"login"|"register">("login")
@@ -33,7 +34,7 @@ export default function LoginPage({onAuthenticated,onGuest}:Props){
    </section>
    <section className="auth-panel">
     <div className="auth-mobile-brand"><b>c/</b> campus<span>.</span></div>
-    <div className="auth-panel-top"><span className="auth-online"><i/> YOUR STUDY SPACE IS READY</span><strong>*</strong></div>
+    <div className="auth-panel-top"><span className="auth-online"><i/> YOUR STUDY SPACE IS READY</span><PWAInstallButton compact /></div>
     <div className="auth-heading"><div className="auth-overline">{mode==="login"?"WELCOME BACK":"YOUR PEOPLE ARE HERE"}</div><h2>{mode==="login"?<>Pick up where<br/>you left off.</>:<>Make room for<br/>better study days.</>}</h2><p>{mode==="login"?"Sign in to get back to your campus.":"Create your free student account to join in."}</p></div>
     <div className="auth-tabs" role="tablist" aria-label="Account options">
      <button type="button" role="tab" aria-selected={mode==="login"} className={mode==="login"?"selected":""} onClick={()=>{setMode("login");setError("")}}>Sign in</button>

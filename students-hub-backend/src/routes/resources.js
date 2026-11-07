@@ -8,7 +8,7 @@ import { authRequired, optionalAuth } from "../auth.js";
 const __filename = fileURLToPath(import.meta.url);
 const defaultBackendDir = path.resolve(path.dirname(__filename), "..");
 
-export default function resourceRoutes(db, backendDir = defaultBackendDir) {
+export default function resourceRoutes(db, backendDir = defaultBackendDir, broadcast = null) {
   const router = Router();
   const uploadDir = path.join(backendDir, "uploads");
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -45,7 +45,7 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
 
   router.get("/", optionalAuth, async (req, res) => {
     try {
-      const { search = "", subject = "", type = "" } = req.query;
+      const { search = "", subject = "", type = "", classroom_id } = req.query;
       let sql = `
         SELECT r.*,
                COALESCE(u.name, 'Campus Peer') AS author,
@@ -55,6 +55,10 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
         WHERE 1=1
       `;
       const params = [req.user?.id || 0];
+      if (classroom_id && classroom_id !== "all") {
+        sql += " AND (r.classroom_id = ? OR r.classroom_id IS NULL)";
+        params.push(Number(classroom_id));
+      }
       if (search) {
         sql += " AND (r.title LIKE ? OR r.description LIKE ? OR r.subject LIKE ?)";
         const q = `%${search}%`;
@@ -137,7 +141,7 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
 
   router.post("/", authRequired, upload.single("file"), async (req, res) => {
     try {
-      const { title, description, subject, type } = req.body;
+      const { title, description, subject, type, classroom_id } = req.body;
       if (!title || !subject || !type) {
         return res.status(400).json({ error: "Title, subject and type are required" });
       }
@@ -146,8 +150,9 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
       }
       const file = req.file;
       const result = await db.run(
-        `INSERT INTO resources (user_id, title, description, subject, type, file_url, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO resources (classroom_id, user_id, title, description, subject, type, file_url, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          classroom_id ? Number(classroom_id) : null,
           req.user.id,
           title.trim(),
           description ? description.trim() : "",
@@ -162,6 +167,14 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
         `SELECT r.*, COALESCE(u.name, 'Campus Peer') AS author, 0 AS saved FROM resources r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?`,
         [result.lastID]
       );
+      if (broadcast) {
+        broadcast({
+          type: "RESOURCE_ADDED",
+          resource: created,
+          classroom_id: created.classroom_id,
+          actor: req.user.name || "A classmate"
+        });
+      }
       res.status(201).json({ resource: created });
     } catch (err) {
       console.error("POST /resources error:", err);
@@ -212,6 +225,12 @@ export default function resourceRoutes(db, backendDir = defaultBackendDir) {
       }
       await db.run("DELETE FROM saved_resources WHERE resource_id = ?", [req.params.id]);
       await db.run("DELETE FROM resources WHERE id = ?", [req.params.id]);
+      if (broadcast) {
+        broadcast({
+          type: "RESOURCE_DELETED",
+          id: req.params.id
+        });
+      }
       res.json({ success: true });
     } catch (err) {
       console.error("DELETE /resources/:id error:", err);

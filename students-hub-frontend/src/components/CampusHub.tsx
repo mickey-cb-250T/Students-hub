@@ -1,5 +1,11 @@
 import * as React from "react"
-import { motion, useReducedMotion } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import FocusPod from "./FocusPod"
+import FlashcardDeck from "./FlashcardDeck"
+import ClassroomManager, { Classroom } from "./ClassroomManager"
+import SemesterSubjectsGrid from "./SemesterSubjectsGrid"
+import { useRealtime, RealtimeEvent } from "./useRealtime"
+import PWAInstallButton from "./PWAInstallButton"
 
 function ScrollJourney({
     onEnter,
@@ -79,8 +85,8 @@ function ScrollJourney({
                 const rect = track.getBoundingClientRect()
                 const maxScroll = rect.height - window.innerHeight
                 const target = maxScroll > 0 ? cl(-rect.top / maxScroll, 0, 1) : 0
-                current += (target - current) * 0.12
-                if (Math.abs(target - current) < 0.0004) current = target
+                current += (target - current) * 0.085
+                if (Math.abs(target - current) < 0.0001) current = target
                 const p = current
 
                 // Stage 1: Welcome Intro
@@ -264,16 +270,16 @@ function ScrollJourney({
                                         className={"desk-paper desk-paper-" + i}
                                         initial={false}
                                         animate={{ rotate: card.angle }}
-                                        whileHover={reduced ? undefined : { rotate: 0, y: -7 }}
+                                        whileHover={reduced ? undefined : { rotate: 0, y: -9, scale: 1.02 }}
                                         whileDrag={{
-                                            scale: 1.04,
+                                            scale: 1.06,
                                             rotate: 0,
                                             cursor: "grabbing",
                                         }}
                                         transition={{
                                             type: "spring",
-                                            stiffness: 220,
-                                            damping: 24,
+                                            stiffness: 260,
+                                            damping: 20,
                                         }}
                                         style={{
                                             background: card.color,
@@ -466,7 +472,7 @@ interface Props {
     onRequireLogin?: () => void
 }
 
-const API = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "")
+const API = (import.meta.env.VITE_API_URL?.trim() || "/api").replace(/\/$/, "")
 
 function formatDisplayDate(dateStr?: string) {
     if (!dateStr) return "Just now"
@@ -519,6 +525,18 @@ function normalizeNotice(n: any) {
     }
 }
 const seeds = [
+    {
+        id: "dt-1",
+        title: "Design Thinking · Empathy & Rapid Prototyping",
+        type: "Notes",
+        subject: "Design Thinking",
+        description:
+            "5 Stages of Design Thinking: Empathize, Define, Ideate, Prototype, Test.\n\nKey Concepts:\n1. Empathy Mapping: Says, Thinks, Does, Feels.\n2. Point-of-View (POV) problem statements: [User] needs [Need] because [Insight].\n3. Low-fidelity wireframing vs high-fidelity interactive models.\n4. Fail early, learn quickly through iterative feedback loops.",
+        author: "Dev Patel",
+        date: "Oct 24",
+        pages: "10 pages",
+        color: "#f3b4c3",
+    },
     {
         id: "1",
         title: "Machine Learning · Unit 3",
@@ -637,7 +655,54 @@ export default function CampusHub({
     const [tab, setTab] = React.useState("Overview")
     const [search, setSearch] = React.useState("")
     const [subject, setSubject] = React.useState("All subjects")
+    const [sortBy, setSortBy] = React.useState<"newest" | "downloads" | "title">("newest")
+    const [flashcardSubject, setFlashcardSubject] = React.useState<string | null>(null)
     const [modal, setModal] = React.useState<any>(null)
+    const [modalTab, setModalTab] = React.useState<"overview" | "doubts" | "notes">("overview")
+    const [classrooms, setClassrooms] = React.useState<Classroom[]>([
+        {
+            id: 1,
+            code: "CSE5-7892",
+            name: "3rd Year CSE · 5th Semester",
+            year_sem: "Year 3 · Sem 5",
+            department: "Computer Science & Engineering",
+            member_count: 58,
+            joined: true,
+        }
+    ])
+    const [activeClassroom, setActiveClassroom] = React.useState<Classroom | null>({
+        id: 1,
+        code: "CSE5-7892",
+        name: "3rd Year CSE · 5th Semester",
+        year_sem: "Year 3 · Sem 5",
+        department: "Computer Science & Engineering",
+        member_count: 58,
+        joined: true,
+    })
+    const [uploadSubject, setUploadSubject] = React.useState<string>("")
+    const [customSubjectMode, setCustomSubjectMode] = React.useState<boolean>(false)
+    const [personalNotes, setPersonalNotes] = React.useState<Record<string, string>>(() => {
+        try {
+            return JSON.parse(localStorage.getItem("campus_personal_notes") || "{}")
+        } catch {
+            return {}
+        }
+    })
+    const [doubts, setDoubts] = React.useState<Record<string, any[]>>(() => {
+        try {
+            return JSON.parse(localStorage.getItem("campus_resource_doubts") || "{}")
+        } catch {
+            return {
+                "1": [
+                    { id: "d1", author: "Kavya R.", question: "Are decision tree pruning formulas asked in university finals?", date: "2 days ago", answers: [{ author: "Ananya", text: "Yes, cost-complexity pruning (alpha parameter) was a 5-mark question last year." }] }
+                ],
+                "2": [
+                    { id: "d2", author: "Dev P.", question: "What is the best way to handle multivalued dependencies in question 3?", date: "Yesterday", answers: [{ author: "Rohan", text: "Decompose into 4NF by creating separate tables for independent multivalued attributes." }] }
+                ]
+            }
+        }
+    })
+    const [newDoubtText, setNewDoubtText] = React.useState("")
     const [toast, setToast] = React.useState("")
     const [alerts, setAlerts] = React.useState<any[]>([])
     const [ready, setReady] = React.useState(false)
@@ -645,6 +710,121 @@ export default function CampusHub({
     const [busy, setBusy] = React.useState(false)
     const form = React.useRef<HTMLFormElement>(null)
     const workspace = React.useRef<HTMLDivElement>(null)
+    const searchInputRef = React.useRef<HTMLInputElement>(null)
+
+    // Keyboard shortcut '/' to focus search
+    React.useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+                e.preventDefault()
+                searchInputRef.current?.focus()
+            }
+        }
+        window.addEventListener("keydown", handleKeyDown)
+        return () => window.removeEventListener("keydown", handleKeyDown)
+    }, [])
+
+    const savePersonalNote = (resourceId: string, text: string) => {
+        setPersonalNotes((prev) => {
+            const next = { ...prev, [resourceId]: text }
+            try {
+                localStorage.setItem("campus_personal_notes", JSON.stringify(next))
+            } catch {}
+            return next
+        })
+    }
+
+    const addDoubt = (resourceId: string) => {
+        if (!newDoubtText.trim()) return
+        const authorName = user?.name || "Student Peer"
+        const newDoubt = {
+            id: "d_" + Date.now(),
+            author: authorName,
+            question: newDoubtText.trim(),
+            date: "Just now",
+            answers: []
+        }
+        setDoubts((prev) => {
+            const existing = prev[resourceId] || []
+            const updated = { ...prev, [resourceId]: [newDoubt, ...existing] }
+            try {
+                localStorage.setItem("campus_resource_doubts", JSON.stringify(updated))
+            } catch {}
+            return updated
+        })
+        setNewDoubtText("")
+        notify("Question posted to peer study board.")
+        broadcastEvent({
+            type: "DOUBT_ADDED",
+            resourceId,
+            doubt: newDoubt,
+            actor: authorName
+        })
+    }
+
+    const addAnswer = (resourceId: string, doubtId: string, answerText: string) => {
+        if (!answerText.trim()) return
+        const authorName = user?.name || "Student Peer"
+        setDoubts((prev) => {
+            const list = prev[resourceId] || []
+            const updatedList = list.map((d) => {
+                if (d.id === doubtId) {
+                    return {
+                        ...d,
+                        answers: [...(d.answers || []), { author: authorName, text: answerText.trim() }]
+                    }
+                }
+                return d
+            })
+            const updated = { ...prev, [resourceId]: updatedList }
+            try {
+                localStorage.setItem("campus_resource_doubts", JSON.stringify(updated))
+            } catch {}
+            return updated
+        })
+        notify("Answer posted.")
+    }
+
+    // Real-time synchronization handler across Android devices and browsers
+    const handleRealtimeEvent = React.useCallback((evt: RealtimeEvent) => {
+        if (evt.type === "RESOURCE_ADDED" && evt.resource) {
+            const normalized = normalizeResource(evt.resource)
+            setItems((prev) => {
+                if (prev.some((item) => String(item.id) === String(normalized.id))) return prev
+                return [normalized, ...prev]
+            })
+            notify(`🔔 ${evt.actor || "A classmate"} shared notes: ${normalized.title} (${normalized.subject})`)
+        } else if (evt.type === "RESOURCE_DELETED" && evt.id) {
+            setItems((prev) => prev.filter((item) => String(item.id) !== String(evt.id)))
+            setSaved((prev) => prev.filter((id) => id !== String(evt.id)))
+        } else if (evt.type === "NOTICE_ADDED" && evt.notice) {
+            const normalized = normalizeNotice(evt.notice)
+            setNotices((prev) => {
+                if (prev.some((n) => String(n.id) === String(normalized.id))) return prev
+                return [normalized, ...prev]
+            })
+            notify(`📢 Campus Notice: ${normalized.title}`)
+        } else if (evt.type === "NOTICE_DELETED" && evt.id) {
+            setNotices((prev) => prev.filter((n) => String(n.id) !== String(evt.id)))
+        } else if (evt.type === "CLASSROOM_CREATED" || evt.type === "CLASSROOM_JOINED") {
+            const headers: Record<string, string> = {}
+            if (token) headers.Authorization = `Bearer ${token}`
+            fetch(`${API}/classrooms`, { headers })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => {
+                    if (data?.classrooms) setClassrooms(data.classrooms)
+                })
+                .catch(() => {})
+        } else if (evt.type === "DOUBT_ADDED" && evt.resourceId && evt.doubt) {
+            setDoubts((prev) => {
+                const list = prev[evt.resourceId!] || []
+                if (list.some((d) => d.id === evt.doubt.id)) return prev
+                return { ...prev, [evt.resourceId!]: [evt.doubt, ...list] }
+            })
+        }
+    }, [token])
+
+    const { isConnected: isRealtimeConnected, broadcastEvent } = useRealtime(handleRealtimeEvent)
 
     const enterWorkspace = () =>
         workspace.current?.scrollIntoView({
@@ -673,15 +853,33 @@ export default function CampusHub({
             })
     }, [token, onSignOut])
 
-    // Load resources and notices from backend
+    // Load classrooms, resources, and notices from backend
     const loadData = React.useCallback(async () => {
         try {
             const headers: Record<string, string> = {}
             if (token) headers.Authorization = `Bearer ${token}`
 
+            // Fetch classrooms
+            const classRes = await fetch(`${API}/classrooms`, { headers })
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null)
+
+            if (classRes?.classrooms && classRes.classrooms.length > 0) {
+                setClassrooms(classRes.classrooms)
+                setActiveClassroom((prev) => {
+                    if (prev) {
+                        const updated = classRes.classrooms.find((c: Classroom) => c.id === prev.id)
+                        return updated || classRes.classrooms[0]
+                    }
+                    return classRes.classrooms[0]
+                })
+            }
+
+            const classQuery = activeClassroom?.id ? `?classroom_id=${activeClassroom.id}` : ""
+
             const [resRes, noticeRes] = await Promise.allSettled([
-                fetch(`${API}/resources`, { headers }).then(r => (r.ok ? r.json() : null)),
-                fetch(`${API}/notices`).then(r => (r.ok ? r.json() : null)),
+                fetch(`${API}/resources${classQuery}`, { headers }).then(r => (r.ok ? r.json() : null)),
+                fetch(`${API}/notices${classQuery}`).then(r => (r.ok ? r.json() : null)),
             ])
 
             if (resRes.status === "fulfilled" && resRes.value?.resources) {
@@ -698,7 +896,7 @@ export default function CampusHub({
         } finally {
             setReady(true)
         }
-    }, [token])
+    }, [token, activeClassroom?.id])
 
     React.useEffect(() => {
         loadData()
@@ -760,15 +958,80 @@ export default function CampusHub({
         const data = new FormData(e.currentTarget)
 
         if (!token) {
-            setError("Please sign in or create an account to share resources or post notices.")
-            setBusy(false)
-            return
+            if (modal === "upload") {
+                const titleVal = String(data.get("title") || "").trim()
+                const subjectVal = String(data.get("subject") || uploadSubject || "").trim()
+                const typeVal = String(data.get("type") || "Notes").trim()
+                const descVal = String(data.get("description") || "").trim()
+
+                if (!titleVal || !subjectVal) {
+                    setError("Title and subject are required.")
+                    setBusy(false)
+                    return
+                }
+
+                const newItem = {
+                    id: "local_" + Date.now(),
+                    title: titleVal,
+                    subject: subjectVal,
+                    type: typeVal,
+                    description: descVal,
+                    downloads: 0,
+                    saved: false,
+                    date: "Just now",
+                    author: "You (Guest)",
+                    classroom_id: activeClassroom?.id || 1,
+                }
+                setItems((n) => [newItem, ...n])
+                broadcastEvent({
+                    type: "RESOURCE_ADDED",
+                    resource: newItem,
+                    classroom_id: activeClassroom?.id || 1,
+                    actor: "A classmate (Guest)"
+                })
+                notify(`Added ${titleVal} under ${subjectVal}! Card generated automatically.`)
+                setModal(null)
+                setUploadSubject("")
+                setBusy(false)
+                return
+            } else if (modal === "notice") {
+                const titleVal = String(data.get("title") || "").trim()
+                const subjectVal = String(data.get("subject") || uploadSubject || "General").trim()
+                const descVal = String(data.get("description") || "").trim()
+                const urgent = data.get("urgent") === "on"
+                if (!titleVal || !descVal) {
+                    setError("Title and description are required.")
+                    setBusy(false)
+                    return
+                }
+                const newNotice = {
+                    id: "local_notice_" + Date.now(),
+                    title: titleVal,
+                    subject: subjectVal,
+                    description: descVal,
+                    urgent,
+                    date: "Just now",
+                    classroom_id: activeClassroom?.id || 1,
+                }
+                setNotices((n) => [newNotice, ...n])
+                broadcastEvent({
+                    type: "NOTICE_ADDED",
+                    notice: newNotice,
+                    classroom_id: activeClassroom?.id || 1,
+                    actor: "A classmate (Guest)"
+                })
+                notify("New notice posted: " + newNotice.title)
+                setModal(null)
+                setUploadSubject("")
+                setBusy(false)
+                return
+            }
         }
 
         try {
             if (modal === "upload") {
                 const titleVal = String(data.get("title") || "").trim()
-                const subjectVal = String(data.get("subject") || "").trim()
+                const subjectVal = String(data.get("subject") || uploadSubject || "").trim()
                 const typeVal = String(data.get("type") || "Notes").trim()
                 const descVal = String(data.get("description") || "").trim()
                 const file = data.get("file") as File | null
@@ -781,6 +1044,9 @@ export default function CampusHub({
                 payload.append("subject", subjectVal)
                 payload.append("type", typeVal)
                 payload.append("description", descVal)
+                if (activeClassroom?.id) {
+                    payload.append("classroom_id", String(activeClassroom.id))
+                }
                 if (file && file.size > 0) {
                     payload.append("file", file)
                 }
@@ -795,11 +1061,12 @@ export default function CampusHub({
 
                 const newItem = normalizeResource(result.resource)
                 setItems((n) => [newItem, ...n])
-                notify("New resource shared: " + newItem.title)
+                notify(`Added ${newItem.title} for ${newItem.subject}! Card generated for all classmates.`)
                 setModal(null)
+                setUploadSubject("")
             } else if (modal === "notice") {
                 const titleVal = String(data.get("title") || "").trim()
-                const subjectVal = String(data.get("subject") || "").trim()
+                const subjectVal = String(data.get("subject") || uploadSubject || "General").trim()
                 const descVal = String(data.get("description") || "").trim()
                 const urgent = data.get("urgent") === "on"
 
@@ -811,7 +1078,13 @@ export default function CampusHub({
                         "Content-Type": "application/json",
                         Authorization: `Bearer ${token}`
                     },
-                    body: JSON.stringify({ title: titleVal, subject: subjectVal, description: descVal, urgent })
+                    body: JSON.stringify({
+                        title: titleVal,
+                        subject: subjectVal,
+                        description: descVal,
+                        urgent,
+                        classroom_id: activeClassroom?.id
+                    })
                 })
                 const result = await res.json()
                 if (!res.ok) throw new Error(result.error || "Failed to post notice.")
@@ -820,6 +1093,7 @@ export default function CampusHub({
                 setNotices((n) => [newNotice, ...n])
                 notify("New notice posted: " + newNotice.title)
                 setModal(null)
+                setUploadSubject("")
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Something went wrong.")
@@ -907,16 +1181,24 @@ export default function CampusHub({
         return list
     }, [items])
 
-    const visible = items.filter(
-        (i) =>
-            (tab === "Overview" ||
-                (tab === "Saved" && saved.includes(String(i.id))) ||
-                i.type === tab) &&
-            (subject === "All subjects" || i.subject === subject) &&
-            (i.title + " " + i.description + " " + i.subject)
-                .toLowerCase()
-                .includes(search.toLowerCase())
-    )
+    const visible = React.useMemo(() => {
+        const filtered = items.filter(
+            (i) =>
+                (tab === "Overview" ||
+                    (tab === "Saved" && saved.includes(String(i.id))) ||
+                    i.type === tab) &&
+                (subject === "All subjects" || i.subject === subject) &&
+                (i.title + " " + i.description + " " + i.subject)
+                    .toLowerCase()
+                    .includes(search.toLowerCase())
+        )
+        if (sortBy === "downloads") {
+            filtered.sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
+        } else if (sortBy === "title") {
+            filtered.sort((a, b) => a.title.localeCompare(b.title))
+        }
+        return filtered
+    }, [items, tab, saved, subject, search, sortBy])
     const btn = (text: string, action: () => void, primary = false) => (
         <button className={primary ? "primary" : "button"} onClick={action}>
             {text}
@@ -928,6 +1210,8 @@ export default function CampusHub({
             style={{
                 ...style,
                 width: "100%",
+                maxWidth: "100vw",
+                overflowX: "hidden",
                 minHeight: 1000,
                 background: "#101216",
                 color: "#f2f3f5",
@@ -935,7 +1219,7 @@ export default function CampusHub({
             }}
         >
             <style>{`
-.campus *{box-sizing:border-box}.campus button,.campus input,.campus select,.campus textarea{font:inherit}.campus button{cursor:pointer;transition:background .2s,transform .2s}.campus button:hover{transform:translateY(-2px)}.campus button:focus-visible,.campus a:focus-visible,.campus input:focus-visible,.campus select:focus-visible,.campus textarea:focus-visible{outline:2px solid #c4b5fd;outline-offset:3px}.campus .layout{display:grid;grid-template-columns:216px minmax(0,1fr);max-width:1600px;margin:auto}.campus .side{padding:32px 20px;border-right:1px solid #292c33;display:flex;flex-direction:column;gap:30px}.campus .nav{display:flex;flex-direction:column;gap:7px}.campus .nav button{border:0;background:transparent;color:#969aa8;text-align:left;padding:12px 14px;border-radius:9px}.campus .nav button.active{background:#c4b5fd;color:#20202b}.campus .main{padding:28px 32px 32px;min-width:0}.campus .top,.campus .between{display:flex;justify-content:space-between;align-items:center;gap:16px}.campus .muted{color:#9297a5}.campus .tiny{font-size:12px}.campus h1{font-size:34px;line-height:1.2;margin:10px 0;letter-spacing:-1px}.campus h2{font-size:19px;margin:0}.campus h3{font-size:17px;margin:0;line-height:1.4}.campus p{line-height:1.65}.campus .button,.campus .primary{border:1px solid #353943;border-radius:8px;padding:10px 16px;color:#e5e7ed;background:#20232b}.campus .primary{background:#c4b5fd;color:#201b30;border-color:#c4b5fd;font-weight:600}.campus .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}.campus .stat{border:1px solid #30333d;background:#191c22;border-radius:13px;padding:18px}.campus .stat strong{display:block;font-size:28px;margin:10px 0 4px}.campus .body{display:grid;grid-template-columns:minmax(0,1fr) 285px;gap:24px}.campus .filters{display:flex;gap:9px;flex-wrap:wrap;margin:20px 0}.campus .chip{border:1px solid #30343e;border-radius:7px;padding:8px 13px;background:transparent;color:#9297a5}.campus .chip.active{background:#292537;color:#d8cfff;border-color:#73628d}.campus .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.campus .resource{background:#191c22;border:1px solid #30333d;border-radius:13px;overflow:hidden;transition:transform .25s,border-color .25s;animation:campus-in .5s both}.campus .resource:hover{transform:translateY(-4px);border-color:#75668f}.campus .cover{height:120px;position:relative;overflow:hidden;padding:17px;color:#282436;display:flex;justify-content:space-between;align-items:center}.campus .paper{width:80px;background:#fffaf2;transform:rotate(-10deg);padding:14px 10px;box-shadow:5px 8px 0 #00000015}.campus .paper i{display:block;height:3px;background:#bbb8b3;margin:7px 0}.campus .resource-body{padding:18px}.campus .tag{font-size:10px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0003;padding:5px 8px;border-radius:5px}.campus .save{background:#ffffff40;border:0;border-radius:50%;width:30px;height:30px;color:#292438}.campus .rail{display:flex;flex-direction:column;gap:18px}.campus .panel{padding:20px;border:1px solid #30333d;background:#191c22;border-radius:13px}.campus .notice{border-bottom:1px solid #30333d;padding:18px 0}.campus .notice:last-child{border:0;padding-bottom:0}.campus .badge{display:inline-block;font-size:10px;background:#422b2b;color:#f8b3a4;border-radius:4px;padding:4px 6px;margin-bottom:10px}.campus .input{background:#171a20;border:1px solid #353943;border-radius:8px;color:#f3f3f5;padding:11px 13px;min-width:0}.campus select option{background:#191c22}.campus .overlay{position:fixed;inset:0;background:#000b;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}.campus .dialog{width:540px;max-width:100%;max-height:90vh;overflow:auto;background:#1a1d24;border:1px solid #44414f;border-radius:16px;padding:26px;box-shadow:0 25px 80px #0008}.campus form{display:flex;flex-direction:column;gap:15px;margin-top:20px}.campus label{display:flex;flex-direction:column;gap:7px;font-size:13px}.campus .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:110;background:#d0f4d4;color:#173322;border-radius:10px;padding:14px 24px;max-width:90%;box-shadow:0 8px 30px #0005}.campus .empty{padding:45px 20px;text-align:center;border:1px dashed #3e4350;border-radius:12px;color:#a4a9b5}.campus .mobile-brand{display:none}@keyframes campus-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.campus *{animation:none!important;transition:none!important}}@media(max-width:1100px){.campus .body{grid-template-columns:1fr}.campus .rail{display:grid;grid-template-columns:1fr 1fr}.campus .layout{grid-template-columns:190px 1fr}.campus .main{padding:24px}}@media(max-width:700px){.campus .layout{display:block}.campus .side{padding:16px;border-right:0;border-bottom:1px solid #30333d;gap:16px}.campus .side .support,.campus .side .profile{display:none}.campus .nav{flex-direction:row;overflow:auto}.campus .nav button{white-space:nowrap;font-size:12px;padding:9px}.campus .main{padding:20px 16px}.campus .stats{grid-template-columns:1fr 1fr}.campus .grid,.campus .rail{grid-template-columns:1fr}.campus h1{font-size:28px}.campus .welcome{align-items:flex-start;flex-direction:column}.campus .top{flex-wrap:wrap}.campus .input.search{width:100%!important}.campus .top .muted{display:none}}
+.campus *{box-sizing:border-box}.campus button,.campus input,.campus select,.campus textarea{font:inherit}.campus button{cursor:pointer;transition:background .2s,transform .2s}.campus button:hover{transform:translateY(-2px)}.campus button:focus-visible,.campus a:focus-visible,.campus input:focus-visible,.campus select:focus-visible,.campus textarea:focus-visible{outline:2px solid #c4b5fd;outline-offset:3px}.campus .layout{display:grid;grid-template-columns:216px minmax(0,1fr);max-width:1600px;margin:auto}.campus .side{padding:32px 20px;border-right:1px solid #292c33;display:flex;flex-direction:column;gap:30px}.campus .nav{display:flex;flex-direction:column;gap:7px}.campus .nav button{border:0;background:transparent;color:#969aa8;text-align:left;padding:12px 14px;border-radius:9px}.campus .nav button.active{background:#c4b5fd;color:#20202b}.campus .main{padding:28px 32px 32px;min-width:0}.campus .top,.campus .between{display:flex;justify-content:space-between;align-items:center;gap:16px}.campus .muted{color:#9297a5}.campus .tiny{font-size:12px}.campus h1{font-size:34px;line-height:1.2;margin:10px 0;letter-spacing:-1px}.campus h2{font-size:19px;margin:0}.campus h3{font-size:17px;margin:0;line-height:1.4}.campus p{line-height:1.65}.campus .button,.campus .primary{border:1px solid #353943;border-radius:8px;padding:10px 16px;color:#e5e7ed;background:#20232b}.campus .primary{background:#c4b5fd;color:#201b30;border-color:#c4b5fd;font-weight:600}.campus .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}.campus .stat{border:1px solid #30333d;background:#191c22;border-radius:13px;padding:18px}.campus .stat strong{display:block;font-size:28px;margin:10px 0 4px}.campus .body{display:grid;grid-template-columns:minmax(0,1fr) 285px;gap:24px}.campus .filters{display:flex;gap:9px;flex-wrap:wrap;margin:20px 0}.campus .chip{border:1px solid #30343e;border-radius:7px;padding:8px 13px;background:transparent;color:#9297a5}.campus .chip.active{background:#292537;color:#d8cfff;border-color:#73628d}.campus .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.campus .resource{background:#191c22;border:1px solid #30333d;border-radius:13px;overflow:hidden;transition:transform .25s,border-color .25s;animation:campus-in .5s both}.campus .resource:hover{transform:translateY(-4px);border-color:#75668f}.campus .cover{height:120px;position:relative;overflow:hidden;padding:17px;color:#282436;display:flex;justify-content:space-between;align-items:center}.campus .paper{width:80px;background:#fffaf2;transform:rotate(-10deg);padding:14px 10px;box-shadow:5px 8px 0 #00000015}.campus .paper i{display:block;height:3px;background:#bbb8b3;margin:7px 0}.campus .resource-body{padding:18px}.campus .tag{font-size:10px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0003;padding:5px 8px;border-radius:5px}.campus .save{background:#ffffff40;border:0;border-radius:50%;width:30px;height:30px;color:#292438}.campus .rail{display:flex;flex-direction:column;gap:18px}.campus .panel{padding:20px;border:1px solid #30333d;background:#191c22;border-radius:13px}.campus .notice{border-bottom:1px solid #30333d;padding:18px 0}.campus .notice:last-child{border:0;padding-bottom:0}.campus .badge{display:inline-block;font-size:10px;background:#422b2b;color:#f8b3a4;border-radius:4px;padding:4px 6px;margin-bottom:10px}.campus .input{background:#171a20;border:1px solid #353943;border-radius:8px;color:#f3f3f5;padding:11px 13px;min-width:0}.campus select option{background:#191c22}.campus .overlay{position:fixed;inset:0;background:#000b;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}.campus .dialog{width:540px;max-width:100%;max-height:90vh;overflow:auto;background:#1a1d24;border:1px solid #44414f;border-radius:16px;padding:26px;box-shadow:0 25px 80px #0008}.campus form{display:flex;flex-direction:column;gap:15px;margin-top:20px}.campus label{display:flex;flex-direction:column;gap:7px;font-size:13px}.campus .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:110;background:#d0f4d4;color:#173322;border-radius:10px;padding:14px 24px;max-width:90%;box-shadow:0 8px 30px #0005}.campus .empty{padding:45px 20px;text-align:center;border:1px dashed #3e4350;border-radius:12px;color:#a4a9b5}.campus .mobile-brand{display:none}@keyframes campus-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.campus *{animation:none!important;transition:none!important}}@media(max-width:1100px){.campus .body{grid-template-columns:1fr}.campus .rail{display:grid;grid-template-columns:1fr 1fr}.campus .layout{grid-template-columns:190px 1fr}.campus .main{padding:24px}}@media(max-width:768px){.campus{overflow-x:hidden}.campus .layout{display:block;width:100%;min-width:0}.campus .side{padding:14px 16px;border-right:0;border-bottom:1px solid #30333d;gap:12px}.campus .side .support,.campus .side .profile,.campus .side .tiny.muted{display:none}.campus .nav{display:flex;flex-direction:row;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:6px;padding-bottom:4px}.campus .nav button{white-space:nowrap;font-size:12px;padding:8px 12px;flex-shrink:0;border-radius:8px}.campus .main{padding:18px 14px;width:100%;box-sizing:border-box}.campus .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0}.campus .stat{padding:12px 14px;min-width:0;word-break:break-word}.campus .stat strong{font-size:22px;margin:4px 0 2px}.campus .grid,.campus .rail{grid-template-columns:1fr;gap:14px}.campus h1{font-size:26px;line-height:1.25}.campus .welcome{align-items:flex-start;flex-direction:column;gap:12px;margin-top:16px!important}.campus .welcome p{font-size:13px!important}.campus .top{flex-direction:column;align-items:stretch;gap:10px}.campus .top .muted{display:none}.campus .input.search{width:100%!important;font-size:14px;padding:10px 12px}.campus .classroom-hub-card{flex-direction:column!important;align-items:stretch!important;gap:12px!important;padding:14px!important}.campus .classroom-hub-controls{display:flex!important;flex-direction:column!important;gap:8px!important;width:100%!important}.campus .classroom-hub-controls select{width:100%!important;min-width:0!important}.campus .classroom-hub-buttons{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}.campus .classroom-hub-buttons button{width:100%!important;justify-content:center!important;text-align:center!important}.campus .shelf-header{flex-direction:column!important;align-items:stretch!important;gap:10px!important}.campus .shelf-controls{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}.campus .shelf-controls select{width:100%!important;min-width:0!important}.campus .filters{display:flex!important;overflow-x:auto!important;flex-wrap:nowrap!important;-webkit-overflow-scrolling:touch!important;gap:8px!important;margin:14px 0!important;padding-bottom:4px!important}.campus .filters .chip{flex-shrink:0!important;white-space:nowrap!important;font-size:12px!important;padding:7px 12px!important}.campus .dialog{width:calc(100vw - 24px)!important;max-width:500px!important;max-height:88vh!important;padding:20px 16px!important;border-radius:14px!important}}
 
 .campus{position:relative;isolation:isolate;overflow:hidden}
 .campus .ambient{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:-1;background:radial-gradient(ellipse at 70% 5%,#25213580,transparent 55%),#101216}
@@ -981,7 +1265,7 @@ export default function CampusHub({
 @media(prefers-reduced-motion:reduce){.campus *,.campus *:before,.campus *:after{animation:none!important;transition:none!important}.campus .resource:hover,.campus .stat:hover,.campus button:hover{transform:none}}
 @media(max-width:700px){.campus .ambient span{width:300px;height:300px;filter:blur(65px)}.campus .resource,.campus .panel,.campus .stat{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}}
 
-.campus{overflow:visible}
+.campus{overflow-x:hidden;max-width:100%}
 .campus .ambient{height:100%;z-index:-1}
 .campus .journey{position:relative;background:#0d1015;border-bottom:1px solid #ffffff20}
 .campus .journey-sticky{top:0;height:100vh;min-height:660px;max-height:1100px;overflow:hidden;background:radial-gradient(ellipse at 60% 50%,#23203460,transparent 65%),#0d1015}
@@ -1175,31 +1459,75 @@ export default function CampusHub({
   .campus .desk-doodle{display:none}
   .campus .desk-tools{margin-top:20px}
 }
-@media(max-width:700px){
-  .campus .campus-journey-track{height:360vh}
-  .campus .desk-header{padding:16px 20px}
-  .campus .desk-status{display:none}
-  .campus .desk-intro-floating{padding:20px 16px}
-  .campus .desk-eyebrow{font-size:7px;letter-spacing:1.4px}
-  .campus .desk-intro h1{font-size:38px;letter-spacing:-1.5px}
-  .campus .desk-intro p{font-size:12px;max-width:290px;margin:auto}
-  .campus .desk-tools{margin-top:10px;padding:0 20px}
-  .campus .desk-tools>span{font-size:6px;letter-spacing:1px}
-  .campus .desk-playground{height:460px;margin:0 15px}
-  .campus .desk-paper-slot{width:200px;height:280px;top:20px}
-  .campus .desk-paper-slot-0{left:5%;z-index:8}
-  .campus .desk-paper-slot-1{left:22%;top:90px}
-  .campus .desk-paper-slot-2{left:38%;top:160px}
-  .campus .desk-paper h2{font-size:22px}
-  .campus .desk-reminder-slot{right:10px;top:270px;width:145px}
-  .campus .desk-reminder h3{font-size:14px}
-  .campus .desk-surprise{bottom:15px;left:0}
-  .campus .desk-drag-hint{bottom:0;right:0;font-size:7px}
-  .campus .desk-footer{padding:14px 20px;justify-content:center}
-  .campus .desk-footer>span{display:none}
-  .campus .desk-nudge{bottom:60px;width:240px}
-  .campus .desk-outline{display:none}
+@media(max-width:768px){
+  /* Root & page wrapper */
+  .campus{width:100%!important;max-width:100vw!important;overflow-x:hidden!important}
+  .campus .ambient{max-width:100vw!important;overflow:hidden!important}
+  .campus .ambient span{width:220px!important;height:220px!important;left:10%!important}
+  
+  /* Hero / Journey track */
+  .campus .campus-journey-track{height:auto!important;min-height:unset!important}
+  .campus .campus-desk{position:relative!important;height:auto!important;min-height:unset!important;max-height:unset!important;padding:16px 0 24px!important}
+  .campus .desk-header{padding:14px 18px!important}
+  .campus .desk-status{display:none!important}
+  .campus .desk-intro-floating{position:relative!important;inset:unset!important;padding:20px 16px!important}
+  .campus .desk-eyebrow{font-size:8px!important;letter-spacing:1.5px!important}
+  .campus .desk-intro h1{font-size:30px!important;letter-spacing:-1px!important;margin:12px 0 10px!important}
+  .campus .desk-intro p{font-size:12px!important;max-width:320px!important;margin:0 auto!important}
+  .campus .desk-scroll-cue{margin-top:16px!important;padding:8px 18px!important;font-size:10px!important}
+  .campus .desk-stage-content{display:none!important}
+  .campus .desk-footer{display:none!important}
+  .campus .desk-outline,.campus .desk-doodle{display:none!important}
+
+  /* WORKSPACE LAYOUT: Completely collapse 2-column sidebar grid to single column */
+  .campus .layout{display:flex!important;flex-direction:column!important;width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;grid-template-columns:1fr!important}
+  .campus .side{display:flex!important;flex-direction:column!important;width:100%!important;max-width:100%!important;min-width:0!important;padding:14px 16px!important;border-right:0!important;border-bottom:1px solid #30333d!important;gap:10px!important;box-sizing:border-box!important}
+  .campus .side .support,.campus .side .profile,.campus .side .tiny.muted{display:none!important}
+  .campus .nav{display:flex!important;flex-direction:row!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;gap:6px!important;padding-bottom:4px!important;width:100%!important;max-width:100%!important}
+  .campus .nav button{white-space:nowrap!important;font-size:12px!important;padding:8px 12px!important;flex-shrink:0!important;border-radius:8px!important}
+  
+  /* MAIN CONTENT AREA */
+  .campus .main{display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;padding:16px 14px 40px!important;box-sizing:border-box!important}
+  .campus .welcome{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:12px!important;margin-top:14px!important;width:100%!important;max-width:100%!important}
+  .campus .welcome p{font-size:13px!important;max-width:100%!important}
+  .campus .top{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:10px!important;width:100%!important}
+  .campus .top .muted{display:none!important}
+  .campus .input.search{width:100%!important;max-width:100%!important;font-size:14px!important;padding:10px 12px!important;box-sizing:border-box!important}
+  
+  /* STATS: Clean 2x2 grid that takes full container width */
+  .campus .stats{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%!important;max-width:100%!important;gap:10px!important;margin:16px 0!important;box-sizing:border-box!important}
+  .campus .stat{width:100%!important;min-width:0!important;padding:12px 14px!important;box-sizing:border-box!important;word-break:break-word!important}
+  .campus .stat strong{font-size:22px!important;margin:4px 0 2px!important;display:block!important}
+  .campus .stat .tiny{font-size:11px!important;line-height:1.4!important}
+
+  /* BODY: Content + Rail */
+  .campus .body{display:flex!important;flex-direction:column!important;width:100%!important;max-width:100%!important;min-width:0!important;gap:20px!important}
+  .campus .body > div:first-child{width:100%!important;max-width:100%!important;min-width:0!important}
+  .campus .grid{display:grid!important;grid-template-columns:1fr!important;width:100%!important;max-width:100%!important;min-width:0!important;gap:14px!important}
+  .campus .rail{display:flex!important;flex-direction:column!important;width:100%!important;max-width:100%!important;min-width:0!important;gap:16px!important;margin-top:20px!important}
+  .campus .rail .panel{width:100%!important;max-width:100%!important;box-sizing:border-box!important}
+  .campus .resource{width:100%!important;max-width:100%!important;box-sizing:border-box!important}
+
+  /* Classroom Hub Card */
+  .campus .classroom-hub-card{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:12px!important;padding:14px!important;width:100%!important;max-width:100%!important;box-sizing:border-box!important}
+  .campus .classroom-hub-info{width:100%!important;max-width:100%!important}
+  .campus .classroom-hub-controls{display:flex!important;flex-direction:column!important;gap:8px!important;width:100%!important}
+  .campus .classroom-hub-controls select{width:100%!important;min-width:0!important;box-sizing:border-box!important}
+  .campus .classroom-hub-buttons{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}
+  .campus .classroom-hub-buttons button{width:100%!important;justify-content:center!important;text-align:center!important;box-sizing:border-box!important}
+
+  /* Shelf header & filters */
+  .campus .shelf-header{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:10px!important;width:100%!important}
+  .campus .shelf-controls{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}
+  .campus .shelf-controls select{width:100%!important;min-width:0!important;box-sizing:border-box!important}
+  .campus .filters{display:flex!important;overflow-x:auto!important;flex-wrap:nowrap!important;-webkit-overflow-scrolling:touch!important;gap:8px!important;margin:14px 0!important;padding-bottom:4px!important;width:100%!important}
+  .campus .filters .chip{flex-shrink:0!important;white-space:nowrap!important;font-size:12px!important;padding:7px 12px!important}
+
+  /* Dialog */
+  .campus .dialog{width:calc(100vw - 24px)!important;max-width:500px!important;max-height:88vh!important;padding:20px 16px!important;border-radius:14px!important;box-sizing:border-box!important}
 }
+
+
 `}</style>
             <div className="ambient" aria-hidden="true">
                 <span />
@@ -1306,6 +1634,9 @@ export default function CampusHub({
                             },
                             true
                         )}
+                        <div style={{ marginTop: 10 }}>
+                            <PWAInstallButton compact />
+                        </div>
                     </div>
                     <div
                         className="tiny muted"
@@ -1334,10 +1665,49 @@ export default function CampusHub({
                 </aside>
                 <main className="main">
                     <header className="top">
-                        <span className="tiny muted">
-                            THE STUDENT COLLECTIVE / YOUR WORKSPACE
-                        </span>
-                        <div style={{ display: "flex", gap: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span className="tiny muted">
+                                THE STUDENT COLLECTIVE / YOUR WORKSPACE
+                            </span>
+                            <div
+                                style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    background: isRealtimeConnected ? "rgba(52,211,153,0.12)" : "rgba(255,255,255,0.05)",
+                                    border: isRealtimeConnected ? "1px solid rgba(52,211,153,0.3)" : "1px solid rgba(255,255,255,0.1)",
+                                    color: isRealtimeConnected ? "#b5e8ca" : "#9ca0af",
+                                    borderRadius: 8,
+                                    padding: "5px 9px",
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                }}
+                                title={isRealtimeConnected ? "Live Peer Sync active across Android & Web" : "Connecting to real-time sync stream..."}
+                            >
+                                <span
+                                    style={{
+                                        width: 7,
+                                        height: 7,
+                                        borderRadius: "50%",
+                                        background: isRealtimeConnected ? "#34d399" : "#f59e0b",
+                                        boxShadow: isRealtimeConnected ? "0 0 8px #34d399" : "none",
+                                    }}
+                                />
+                                <span>{isRealtimeConnected ? "Live Sync" : "Syncing…"}</span>
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <PWAInstallButton />
+                            <FocusPod onComplete={() => notify("Pomodoro study cycle completed! Great job.")} />
+                            <button
+                                type="button"
+                                className="button"
+                                style={{ display: "flex", alignItems: "center", gap: 6, borderColor: "rgba(196,181,253,0.35)", color: "#d8cfff" }}
+                                onClick={() => setFlashcardSubject("All subjects")}
+                                title="Open interactive revision flashcard deck"
+                            >
+                                <span>⚡</span> Exam Sprint
+                            </button>
                             {btn(
                                 "Notifications" +
                                     (alerts.length
@@ -1361,7 +1731,32 @@ export default function CampusHub({
                             </div>
                         </div>
                     </header>
-                    <div className="between welcome" style={{ marginTop: 34 }}>
+
+                    {/* Classroom Hub & Invite Code Switcher */}
+                    <div style={{ marginTop: 20 }}>
+                        <ClassroomManager
+                            classrooms={classrooms}
+                            activeClassroom={activeClassroom}
+                            onSelectClassroom={(c) => {
+                                setActiveClassroom(c)
+                                setSubject("All subjects")
+                            }}
+                            onJoinSuccess={(c) => {
+                                setClassrooms((prev) => {
+                                    if (prev.some((x) => x.id === c.id)) return prev
+                                    return [c, ...prev]
+                                })
+                            }}
+                            onCreateSuccess={(c) => {
+                                setClassrooms((prev) => [c, ...prev])
+                            }}
+                            token={token || null}
+                            API={API}
+                            notify={notify}
+                        />
+                    </div>
+
+                    <div className="between welcome" style={{ marginTop: 24 }}>
                         <div>
                             <div
                                 className="tiny"
@@ -1374,18 +1769,35 @@ export default function CampusHub({
                                 className="muted"
                                 style={{ margin: "8px 0 0", fontSize: 14 }}
                             >
-                                Notes, solved assignments, and the heads-up you
-                                needed. All in one place.
+                                Notes, solved assignments, flashcard sprints, and real peer study discussions.
                             </p>
                         </div>
-                        {btn(
-                            "+ Upload resource",
-                            () => {
-                                setError("")
-                                setModal("upload")
-                            },
-                            true
-                        )}
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <button
+                                type="button"
+                                className="button"
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    borderColor: "rgba(196,181,253,0.5)",
+                                    background: "rgba(196,181,253,0.08)",
+                                    color: "#d8cfff",
+                                    fontWeight: 600,
+                                }}
+                                onClick={() => setFlashcardSubject("All subjects")}
+                            >
+                                <span>⚡</span> Interactive Flashcards
+                            </button>
+                            {btn(
+                                "+ Upload resource",
+                                () => {
+                                    setError("")
+                                    setModal("upload")
+                                },
+                                true
+                            )}
+                        </div>
                     </div>
                     <section className="stats">
                         {[
@@ -1427,9 +1839,29 @@ export default function CampusHub({
                             </div>
                         ))}
                     </section>
+
+                    {/* Dynamic Semester Subjects Grid - Auto generates cards for any subject like Design Thinking */}
+                    <SemesterSubjectsGrid
+                        items={items}
+                        activeSubject={subject}
+                        onSelectSubject={(s) => setSubject(s)}
+                        onAddForSubject={(sub) => {
+                            if (sub) {
+                                setUploadSubject(sub)
+                                setCustomSubjectMode(false)
+                            } else {
+                                setUploadSubject("")
+                                setCustomSubjectMode(true)
+                            }
+                            setError("")
+                            setModal("upload")
+                        }}
+                        onOpenQuiz={(sub) => setFlashcardSubject(sub)}
+                    />
+
                     <div className="body">
                         <section>
-                            <div className="between">
+                            <div className="between shelf-header" style={{ flexWrap: "wrap", gap: 12 }}>
                                 <h2>
                                     {tab === "Overview"
                                         ? "The resource shelf"
@@ -1439,25 +1871,63 @@ export default function CampusHub({
                                             ? "Saved for later"
                                             : tab}
                                 </h2>
-                                <select
-                                    aria-label="Filter by subject"
-                                    className="input tiny"
-                                    value={subject}
-                                    onChange={(e) => setSubject(e.target.value)}
-                                >
-                                    {availableSubjects.map((s) => (
-                                        <option key={s}>{s}</option>
-                                    ))}
-                                </select>
+                                <div className="shelf-controls" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                    <label className="tiny muted" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                        Sort:
+                                        <select
+                                            aria-label="Sort resources"
+                                            className="input tiny"
+                                            value={sortBy}
+                                            onChange={(e: any) => setSortBy(e.target.value)}
+                                        >
+                                            <option value="newest">Newest first</option>
+                                            <option value="downloads">Most downloaded</option>
+                                            <option value="title">Alphabetical</option>
+                                        </select>
+                                    </label>
+                                    <select
+                                        aria-label="Filter by subject"
+                                        className="input tiny"
+                                        value={subject}
+                                        onChange={(e) => setSubject(e.target.value)}
+                                    >
+                                        {availableSubjects.map((s) => (
+                                            <option key={s}>{s}</option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
-                            <input
-                                className="input search"
-                                aria-label="Search resources"
-                                placeholder="Search by topic, subject, or keyword..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                style={{ width: "100%", marginTop: 18 }}
-                            />
+                            <div style={{ position: "relative", marginTop: 18 }}>
+                                <input
+                                    ref={searchInputRef}
+                                    className="input search"
+                                    aria-label="Search resources"
+                                    placeholder="Search by topic, subject, or keyword... (Press / to focus)"
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    style={{ width: "100%", paddingRight: 45 }}
+                                />
+                                {search && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSearch("")}
+                                        style={{
+                                            position: "absolute",
+                                            right: 12,
+                                            top: "50%",
+                                            transform: "translateY(-50%)",
+                                            background: "none",
+                                            border: "none",
+                                            color: "#8a8e9e",
+                                            cursor: "pointer",
+                                            fontSize: 14,
+                                        }}
+                                        title="Clear search"
+                                    >
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
                             <div className="filters">
                                 {[
                                     "Overview",
@@ -1561,14 +2031,13 @@ export default function CampusHub({
                             ) : visible.length ? (
                                 <div className="grid">
                                     {visible.map((item, i) => (
-                                        <article
+                                        <motion.article
                                             className="resource"
                                             key={item.id}
-                                            style={{
-                                                animationDelay:
-                                                    Math.min(i * 0.05, 0.3) +
-                                                    "s",
-                                            }}
+                                            initial={{ opacity: 0, y: 14 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ type: "spring", stiffness: 280, damping: 24, delay: Math.min(i * 0.04, 0.25) }}
+                                            whileHover={{ y: -6, transition: { duration: 0.2 } }}
                                         >
                                             <div
                                                 className="cover"
@@ -1630,10 +2099,12 @@ export default function CampusHub({
                                             <div className="resource-body">
                                                 <div
                                                     className="tiny muted"
-                                                    style={{ marginBottom: 8 }}
+                                                    style={{ marginBottom: 8, display: "flex", justifyContent: "space-between" }}
                                                 >
-                                                    {item.subject} ·{" "}
-                                                    {item.pages}
+                                                    <span>{item.subject} · {item.pages}</span>
+                                                    {item.downloads > 0 && (
+                                                        <span style={{ color: "#baa9e8" }}>⬇ {item.downloads}</span>
+                                                    )}
                                                 </div>
                                                 <h3>{item.title}</h3>
                                                 <p
@@ -1655,6 +2126,7 @@ export default function CampusHub({
                                                         paddingTop: 13,
                                                         borderTop:
                                                             "1px solid #30333d",
+                                                        gap: 8,
                                                     }}
                                                 >
                                                     <span className="tiny muted">
@@ -1662,12 +2134,29 @@ export default function CampusHub({
                                                         <br />
                                                         {item.date}
                                                     </span>
-                                                    {btn("Open resource", () =>
-                                                        setModal(item)
-                                                    )}
+                                                    <div style={{ display: "flex", gap: 8 }}>
+                                                        <button
+                                                            type="button"
+                                                            className="button tiny"
+                                                            style={{
+                                                                borderColor: "rgba(196,181,253,0.3)",
+                                                                color: "#d8cfff",
+                                                                padding: "8px 12px",
+                                                                fontSize: 11,
+                                                            }}
+                                                            onClick={() => setFlashcardSubject(item.subject)}
+                                                            title={`Practice ${item.subject} flashcards`}
+                                                        >
+                                                            ⚡ Quiz
+                                                        </button>
+                                                        {btn("Open", () => {
+                                                            setModalTab("overview")
+                                                            setModal(item)
+                                                        })}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </article>
+                                        </motion.article>
                                     ))}
                                 </div>
                             ) : (
@@ -1874,65 +2363,256 @@ export default function CampusHub({
                             </>
                         ) : typeof modal === "object" ? (
                             <>
-                                <div
-                                    style={{
-                                        color: modal.color,
-                                        marginTop: 20,
-                                        fontSize: 12,
-                                    }}
-                                >
-                                    {modal.type} / {modal.subject}
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
+                                    <span style={{ color: modal.color, fontSize: 12, fontWeight: 600 }}>
+                                        {modal.type} · {modal.subject}
+                                    </span>
+                                    <span className="tiny muted">
+                                        {modal.downloads || 0} downloads · {modal.pages}
+                                    </span>
                                 </div>
-                                <h1 style={{ fontSize: 25 }}>{modal.title}</h1>
-                                <p className="tiny muted">
+                                <h1 style={{ fontSize: 24, margin: "8px 0 4px" }}>{modal.title}</h1>
+                                <p className="tiny muted" style={{ margin: "0 0 16px" }}>
                                     Shared by {modal.author} · {modal.date}
                                 </p>
-                                <p
-                                    style={{
-                                        whiteSpace: "pre-wrap",
-                                        fontSize: 14,
-                                    }}
-                                >
-                                    {modal.description}
-                                </p>
-                                {!modal.url && (
-                                    <p className="tiny muted">
-                                        Sample material · Download as a text
-                                        study sheet.
-                                    </p>
-                                )}
-                                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
-                                    {btn(
-                                        modal.url
-                                            ? "Download file"
-                                            : "Download study sheet",
-                                        () => download(modal),
-                                        true
-                                    )}
-                                    {btn(
-                                        saved.includes(modal.id)
-                                            ? "Unsave"
-                                            : "Save for later",
-                                        () => toggle(modal.id)
-                                    )}
-                                    {token && user && (modal.user_id === user.id || modal.author === user.name) && (
-                                        <button
-                                            type="button"
-                                            className="button"
-                                            style={{ borderColor: "#ef444466", color: "#fca5a5" }}
-                                            onClick={() => deleteResource(modal.id)}
-                                        >
-                                            Delete upload
-                                        </button>
-                                    )}
+
+                                {/* Reader Sub-Tabs */}
+                                <div style={{ display: "flex", gap: 6, padding: 4, background: "rgba(255,255,255,0.05)", borderRadius: 10, marginBottom: 18 }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalTab("overview")}
+                                        style={{
+                                            flex: 1,
+                                            border: "none",
+                                            background: modalTab === "overview" ? "#c4b5fd" : "transparent",
+                                            color: modalTab === "overview" ? "#1f1b2e" : "#a1a5b4",
+                                            padding: "8px 12px",
+                                            borderRadius: 7,
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        📖 Study Notes
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalTab("notes")}
+                                        style={{
+                                            flex: 1,
+                                            border: "none",
+                                            background: modalTab === "notes" ? "#c4b5fd" : "transparent",
+                                            color: modalTab === "notes" ? "#1f1b2e" : "#a1a5b4",
+                                            padding: "8px 12px",
+                                            borderRadius: 7,
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        📝 My Scratchpad
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalTab("doubts")}
+                                        style={{
+                                            flex: 1,
+                                            border: "none",
+                                            background: modalTab === "doubts" ? "#c4b5fd" : "transparent",
+                                            color: modalTab === "doubts" ? "#1f1b2e" : "#a1a5b4",
+                                            padding: "8px 12px",
+                                            borderRadius: 7,
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        💬 Peer Q&A ({(doubts[modal.id] || []).length})
+                                    </button>
                                 </div>
+
+                                {modalTab === "overview" && (
+                                    <>
+                                        <div
+                                            style={{
+                                                background: "rgba(0,0,0,0.25)",
+                                                border: "1px solid rgba(255,255,255,0.1)",
+                                                borderRadius: 12,
+                                                padding: 16,
+                                                maxHeight: 280,
+                                                overflowY: "auto",
+                                            }}
+                                        >
+                                            <p
+                                                style={{
+                                                    whiteSpace: "pre-wrap",
+                                                    fontSize: 13,
+                                                    lineHeight: 1.65,
+                                                    color: "#e2e4ed",
+                                                    margin: 0,
+                                                }}
+                                            >
+                                                {modal.description}
+                                            </p>
+                                        </div>
+                                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18, alignItems: "center" }}>
+                                            {btn(
+                                                modal.url ? "Download file" : "Download study sheet",
+                                                () => download(modal),
+                                                true
+                                            )}
+                                            {btn(
+                                                saved.includes(modal.id) ? "Unsave" : "Save for later",
+                                                () => toggle(modal.id)
+                                            )}
+                                            <button
+                                                type="button"
+                                                className="button"
+                                                style={{ borderColor: "rgba(196,181,253,0.4)", color: "#d8cfff" }}
+                                                onClick={() => {
+                                                    try {
+                                                        navigator.clipboard.writeText(`${modal.title}\n\n${modal.description}`)
+                                                        notify("Notes copied to clipboard!")
+                                                    } catch {
+                                                        notify("Copy supported in browser!")
+                                                    }
+                                                }}
+                                            >
+                                                📋 Copy notes
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="button"
+                                                style={{ borderColor: "rgba(181,232,202,0.4)", color: "#b5e8ca" }}
+                                                onClick={() => setFlashcardSubject(modal.subject)}
+                                            >
+                                                ⚡ Practice {modal.subject}
+                                            </button>
+                                            {token && user && (modal.user_id === user.id || modal.author === user.name) && (
+                                                <button
+                                                    type="button"
+                                                    className="button"
+                                                    style={{ borderColor: "#ef444466", color: "#fca5a5", marginLeft: "auto" }}
+                                                    onClick={() => deleteResource(modal.id)}
+                                                >
+                                                    Delete upload
+                                                </button>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+
+                                {modalTab === "notes" && (
+                                    <div>
+                                        <div className="tiny muted" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+                                            <span>Your private revision scratchpad</span>
+                                            <span>Auto-saved to browser</span>
+                                        </div>
+                                        <textarea
+                                            className="input"
+                                            rows={9}
+                                            placeholder="Jot down formulas, tricky steps, or reminder hints while reading these notes..."
+                                            value={personalNotes[modal.id] || ""}
+                                            onChange={(e) => savePersonalNote(modal.id, e.target.value)}
+                                            style={{ width: "100%", fontSize: 13, lineHeight: 1.6 }}
+                                        />
+                                        <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            <span className="tiny muted">
+                                                {(personalNotes[modal.id] || "").length} characters saved
+                                            </span>
+                                            <button
+                                                type="button"
+                                                className="button"
+                                                onClick={() => {
+                                                    savePersonalNote(modal.id, "")
+                                                    notify("Scratchpad cleared.")
+                                                }}
+                                            >
+                                                Clear note
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {modalTab === "doubts" && (
+                                    <div>
+                                        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                                            <input
+                                                className="input"
+                                                placeholder="Ask a question about this material..."
+                                                value={newDoubtText}
+                                                onChange={(e) => setNewDoubtText(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter") addDoubt(modal.id)
+                                                }}
+                                                style={{ flex: 1, fontSize: 13 }}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="primary"
+                                                onClick={() => addDoubt(modal.id)}
+                                            >
+                                                Post
+                                            </button>
+                                        </div>
+                                        <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+                                            {(doubts[modal.id] || []).length > 0 ? (
+                                                (doubts[modal.id] || []).map((d) => (
+                                                    <div
+                                                        key={d.id}
+                                                        style={{
+                                                            padding: 12,
+                                                            background: "rgba(255,255,255,0.04)",
+                                                            border: "1px solid rgba(255,255,255,0.1)",
+                                                            borderRadius: 8,
+                                                        }}
+                                                    >
+                                                        <div className="tiny muted" style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                                                            <span>{d.author}</span>
+                                                            <span>{d.date}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: 13, color: "#f3f4f6", fontWeight: 500 }}>
+                                                            {d.question}
+                                                        </div>
+                                                        {d.answers && d.answers.length > 0 && (
+                                                            <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: "2px solid #c4b5fd" }}>
+                                                                {d.answers.map((ans: any, idx: number) => (
+                                                                    <div key={idx} style={{ fontSize: 12, color: "#c8cae5", marginTop: 4 }}>
+                                                                        <strong style={{ color: "#d8cfff" }}>{ans.author}:</strong> {ans.text}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        <div style={{ marginTop: 8 }}>
+                                                            <input
+                                                                className="input tiny"
+                                                                placeholder="Add peer reply... (Press Enter)"
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === "Enter" && (e.target as HTMLInputElement).value) {
+                                                                        addAnswer(modal.id, d.id, (e.target as HTMLInputElement).value)
+                                                                        ;(e.target as HTMLInputElement).value = ""
+                                                                    }
+                                                                }}
+                                                                style={{ width: "100%", padding: "6px 10px", fontSize: 12 }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="empty" style={{ padding: "20px" }}>
+                                                    <p className="tiny muted">No questions yet. Ask anything you’re curious about!</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </>
                         ) : (
                             <>
                                 <p className="tiny muted">
-                                    {token
-                                        ? "Share materials with your classmates. All uploads are saved to the Students Hub database."
-                                        : "You are in guest preview. Sign in to share and post materials."}
+                                    {activeClassroom
+                                        ? `Posting to ${activeClassroom.name} (${activeClassroom.code}). Cards are automatically created for any subject name.`
+                                        : "Share materials with your classmates. All uploads are saved to the Students Hub database."}
                                 </p>
                                 <form ref={form} onSubmit={submit}>
                                     <label>
@@ -1946,21 +2626,63 @@ export default function CampusHub({
                                             placeholder={
                                                 modal === "notice"
                                                     ? "e.g. ML assignment check tomorrow"
-                                                    : "e.g. Unit 3 revision notes"
+                                                    : "e.g. Unit 3 revision notes / Design Thinking Empathy Map"
                                             }
                                         />
                                     </label>
                                     <div style={{ display: "flex", gap: 14 }}>
                                         <label style={{ flex: 1 }}>
-                                            Subject
-                                            <select
-                                                name="subject"
-                                                className="input"
-                                            >
-                                                {availableSubjects.slice(1).map((s) => (
-                                                    <option key={s}>{s}</option>
-                                                ))}
-                                            </select>
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                                                <span>Subject</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setCustomSubjectMode(!customSubjectMode)
+                                                        if (!customSubjectMode) setUploadSubject("")
+                                                    }}
+                                                    style={{
+                                                        background: "none",
+                                                        border: "none",
+                                                        color: "#c4b5fd",
+                                                        fontSize: 11,
+                                                        textDecoration: "underline",
+                                                        cursor: "pointer",
+                                                        padding: 0,
+                                                    }}
+                                                >
+                                                    {customSubjectMode ? "← Pick existing" : "+ Type new subject"}
+                                                </button>
+                                            </div>
+                                            {customSubjectMode ? (
+                                                <input
+                                                    name="subject"
+                                                    className="input"
+                                                    required
+                                                    placeholder="Type subject name (e.g. Design Thinking)..."
+                                                    value={uploadSubject}
+                                                    onChange={(e) => setUploadSubject(e.target.value)}
+                                                    autoFocus
+                                                />
+                                            ) : (
+                                                <select
+                                                    name="subject"
+                                                    className="input"
+                                                    value={uploadSubject || (availableSubjects.slice(1)[0] || "General")}
+                                                    onChange={(e) => {
+                                                        if (e.target.value === "__NEW__") {
+                                                            setCustomSubjectMode(true)
+                                                            setUploadSubject("")
+                                                        } else {
+                                                            setUploadSubject(e.target.value)
+                                                        }
+                                                    }}
+                                                >
+                                                    {availableSubjects.slice(1).map((s) => (
+                                                        <option key={s} value={s}>{s}</option>
+                                                    ))}
+                                                    <option value="__NEW__">+ Type another subject (e.g. Design Thinking)...</option>
+                                                </select>
+                                            )}
                                         </label>
                                         {modal === "upload" && (
                                             <label style={{ flex: 1 }}>
@@ -2049,6 +2771,12 @@ export default function CampusHub({
                         )}
                     </div>
                 </div>
+            )}
+            {flashcardSubject && (
+                <FlashcardDeck
+                    subject={flashcardSubject}
+                    onClose={() => setFlashcardSubject(null)}
+                />
             )}
             {toast && (
                 <div role="status" className="toast">

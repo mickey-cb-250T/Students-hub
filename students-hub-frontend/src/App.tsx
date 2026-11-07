@@ -38,15 +38,15 @@ export default function App() {
         onClick={signOut}
         style={{
           position: "fixed",
-          zIndex: 200,
-          right: 18,
-          bottom: 18,
+          zIndex: 80,
+          right: 12,
+          bottom: 12,
           border: "1px solid #ffffff30",
           borderRadius: 999,
-          padding: "10px 18px",
+          padding: "7px 13px",
           background: "#1b1a25ee",
           color: "#e9e4f5",
-          font: "600 12px 'DM Sans', sans-serif",
+          font: "600 11px 'DM Sans', sans-serif",
           backdropFilter: "blur(12px)",
           cursor: "pointer",
           boxShadow: "0 6px 20px rgba(0,0,0,0.35)",
@@ -60,3 +60,4 @@ export default function App() {
     </>
   )
 }
+

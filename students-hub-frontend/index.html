@@ -2,10 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
     <title>Students Hub</title>
+    <meta name="description" content="A full stack peer study platform for college students to share notes, assignments, and past papers." />
+    <meta property="og:title" content="Students Hub" />
+    <meta property="og:description" content="A full stack peer study platform for college students to share notes, assignments, and past papers." />
+    <meta name="theme-color" content="#101216" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="StudentsHub" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+        background-color: #101216;
+        color: #f2f3f5;
+        -webkit-text-size-adjust: 100%;
+      }
+      #root {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+        min-height: 100vh;
+      }
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+    </style>
   </head>
-  <body>
+  <body style="background:#101216;color:#f2f3f5;overflow-x:hidden;">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

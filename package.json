@@ -4,14 +4,21 @@
   "description": "Students Hub - full stack peer study platform",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "students-hub-backend",
+    "students-hub-frontend"
+  ],
   "scripts": {
-    "install:all": "npm --prefix students-hub-backend install && npm --prefix students-hub-frontend install",
     "build": "npm --prefix students-hub-frontend run build",
-    "start": "node students-hub-backend/server.js",
-    "start:prod": "node students-hub-backend/server.js",
-    "dev": "node start-dev.js",
-    "dev:backend": "npm --prefix students-hub-backend run dev",
-    "dev:frontend": "npm --prefix students-hub-frontend run dev",
-    "build:frontend": "npm --prefix students-hub-frontend run build"
+    "build:frontend": "npm --prefix students-hub-frontend run build",
+    "install:all": "npm install",
+    "dev": "npm run build:frontend && node students-hub-backend/server.js",
+    "lint": "npm --prefix students-hub-frontend run typecheck",
+    "start": "node students-hub-backend/server.js"
+  },
+  "dependencies": {
+    "@types/ws": "^8.18.2",
+    "vite-plugin-pwa": "^2.0.0",
+    "ws": "^8.22.1"
   }
 }
